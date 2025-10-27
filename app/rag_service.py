@@ -1,5 +1,8 @@
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
+# Recommended migration (deprecation fix):
+# from langchain_perplexity import ChatPerplexity
+# from langchain_qdrant import Qdrant
 from langchain_community.chat_models import ChatPerplexity
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
@@ -40,7 +43,7 @@ Chat History: {chat_history}
 Student Question: {question}
 
 Helpful Answer (specific to this course):"""
-    
+
     def _initialize_llm(self):
         """Initialize LLM based on provider setting"""
         provider = self.settings.llm_provider.lower()
@@ -67,7 +70,7 @@ Helpful Answer (specific to this course):"""
                 openai_api_key=self.settings.openai_api_key,
                 temperature=0.7
             )
-    
+
     def get_or_create_conversation(self, conversation_id: str = None):
         """Get existing conversation or create new one"""
         if not conversation_id:
@@ -82,8 +85,8 @@ Helpful Answer (specific to this course):"""
             self.conversations[conversation_id] = memory
         
         return conversation_id, self.conversations[conversation_id]
-    
-    async def chat(self, message: str, course_id: int = None, 
+
+    async def chat(self, message: str, course_id: int = None,
                    conversation_id: str = None):
         """Chat with RAG system"""
         logger.info(f"Chat request - message: '{message}', course_id: {course_id}")
@@ -96,6 +99,8 @@ Helpful Answer (specific to this course):"""
             client=self.embeddings_service.client,
             collection_name=self.settings.collection_name,
             embeddings=self.embeddings_service.embeddings
+            # If you migrate to langchain_qdrant and store metadata under "metadata":
+            # metadata_payload_key="metadata",
         )
         
         # Create retriever with course filter
@@ -103,10 +108,14 @@ Helpful Answer (specific to this course):"""
         
         # Apply course filter if provided
         if course_id:
+            # If your payload has course_id at root (default langchain_community behavior):
+            filter_key = "course_id"
+            # If your payload is nested under "metadata", switch to:
+            # filter_key = "metadata.course_id"
             search_kwargs["filter"] = Filter(
                 must=[
                     FieldCondition(
-                        key="course_id",
+                        key=filter_key,
                         match=MatchValue(value=course_id)
                     )
                 ]
@@ -117,26 +126,38 @@ Helpful Answer (specific to this course):"""
             search_kwargs=search_kwargs
         )
         
-        # Test retrieval before QA chain
+        # Test retrieval (optional - for debugging)
         try:
-            test_docs = retriever.get_relevant_documents(message)
+            test_docs = retriever.invoke(message)  # modern API
             logger.info(f"Retriever found {len(test_docs)} documents")
             if test_docs:
                 logger.info(f"Sample doc metadata: {test_docs[0].metadata}")
+                # logger.info(f"Sample content: {test_docs[0].page_content[:200]}")
+            else:
+                logger.warning("No documents found by retriever")
+                logger.warning(f"Filter used: {search_kwargs.get('filter')}")
         except Exception as e:
             logger.error(f"Retriever test failed: {e}")
         
-        # Create QA chain
+        # Create custom prompt
+        QA_PROMPT = PromptTemplate(
+            template=self.prompt_template,
+            input_variables=["context", "chat_history", "question"]
+        )
+        
+        # Create QA chain with custom prompt
         qa_chain = ConversationalRetrievalChain.from_llm(
             llm=self.llm,
             retriever=retriever,
             memory=memory,
             return_source_documents=True,
-            verbose=True
+            verbose=True,
+            combine_docs_chain_kwargs={"prompt": QA_PROMPT}
         )
         
-        # Get response
-        result = qa_chain({"question": message})
+        # Get response (migrate to invoke to remove deprecation warning)
+        # result = qa_chain({"question": message})
+        result = qa_chain.invoke({"question": message})
         
         # Extract sources
         sources = []
@@ -155,7 +176,7 @@ Helpful Answer (specific to this course):"""
             'sources': sources,
             'conversation_id': conversation_id
         }
-    
+
     def clear_conversation(self, conversation_id: str):
         """Clear conversation history"""
         if conversation_id in self.conversations:

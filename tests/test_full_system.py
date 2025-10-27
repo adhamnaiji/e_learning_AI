@@ -58,6 +58,7 @@ async def test_full_system():
     print("\n" + "=" * 60)
     print("TEST 1: Indexing Course")
     print("=" * 60)
+    
     try:
         embeddings_service.index_course(test_course)
         print("✅ Course indexed successfully!")
@@ -72,12 +73,14 @@ async def test_full_system():
     print("\n" + "=" * 60)
     print("TEST 2: Semantic Search")
     print("=" * 60)
+    
     try:
         search_query = "I want to learn programming for beginners"
         print(f"🔍 Query: {search_query}")
-        results = embeddings_service.search_similar(search_query, top_k=3)
         
+        results = embeddings_service.search_similar(search_query, top_k=3)
         print(f"\n📊 Found {len(results)} results:")
+        
         for i, (doc, score) in enumerate(results, 1):
             print(f"\n{i}. Score: {score:.4f}")
             print(f"   Title: {doc.metadata.get('title')}")
@@ -91,6 +94,7 @@ async def test_full_system():
     print("\n" + "=" * 60)
     print("TEST 3: RAG Chat")
     print("=" * 60)
+    
     try:
         question = "What will I learn in the Python course?"
         print(f"💬 Question: {question}")
