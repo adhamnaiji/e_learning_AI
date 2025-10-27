@@ -29,24 +29,24 @@ class RAGService:
         # Store conversations (memory per conversation id)
         self.conversations = {}
 
-        # Course-grounded prompt
-        self.prompt_template = """You are an AI learning assistant helping students with a SPECIFIC course.
+        # Course-grounded prompt - FIXED INDENTATION
+        self.prompt_template = """You are a course assistant. Answer the student's question using ONLY the course materials below.
 
-IMPORTANT INSTRUCTIONS:
-1. Answer ONLY based on the course content provided in the context
-2. DO NOT provide general information - be specific to THIS course
-3. If the context contains course information, describe THAT SPECIFIC course
-4. If asked about videos/lessons, list the actual lessons from THIS course
-5. If you don't find the answer in the context, say: "I don't have that specific information about this course."
+STRICT RULES:
+1. Answer the exact question asked - nothing more
+2. Do NOT include course metadata (instructor, duration, level) unless specifically asked
+3. Be concise - maximum 100 words unless listing items
+4. If listing lessons/topics, use bullet points with NO extra description
+5. If you cannot answer from the context, say: "That information isn't in the course materials."
 
-Course Context:
+Course Materials:
 {context}
 
 Chat History: {chat_history}
 
-Student Question: {question}
+Question: {question}
 
-Helpful Answer (specific to this course):"""
+Answer:"""
 
     def _initialize_llm(self):
         """Initialize LLM based on provider setting"""
@@ -56,23 +56,23 @@ Helpful Answer (specific to this course):"""
             logger.info(f"Initializing Perplexity LLM: {self.settings.llm_model}")
             return ChatPerplexity(
                 model=self.settings.llm_model,
-                temperature=0.2,
+                temperature=0.0,  # Changed from 0.2
                 pplx_api_key=self.settings.perplexity_api_key,
-                max_tokens=1024,
+                max_tokens=150,  # Reduced from 512 for conciseness
             )
         elif provider == "groq":
             logger.info(f"Initializing Groq LLM: {self.settings.llm_model}")
             return ChatGroq(
                 model=self.settings.llm_model,
                 groq_api_key=self.settings.groq_api_key,
-                temperature=0.7,
+                temperature=0.0,  # Changed from 0.7
             )
         else:  # default to openai
             logger.info(f"Initializing OpenAI LLM: {self.settings.llm_model}")
             return ChatOpenAI(
                 model=self.settings.llm_model,
                 openai_api_key=self.settings.openai_api_key,
-                temperature=0.7,
+                temperature=0.0,  # Changed from 0.7
             )
 
     def get_or_create_conversation(self, conversation_id: str = None):
@@ -109,15 +109,13 @@ Helpful Answer (specific to this course):"""
             client=self.embeddings_service.client,
             collection_name=self.settings.collection_name,
             embeddings=self.embeddings_service.embeddings,
-            # If you later migrate to langchain_qdrant and store metadata under "metadata",
-            # add: metadata_payload_key="metadata",
         )
 
         # Build retriever and filter
         search_kwargs = {"k": self.settings.top_k_results}
 
         if course_id:
-            # use nested metadata path, as requested
+            # use nested metadata path
             filter_key = "metadata.course_id"
             search_kwargs["filter"] = Filter(
                 must=[
@@ -133,11 +131,10 @@ Helpful Answer (specific to this course):"""
 
         # DEBUG: test retrieval before running the chain
         try:
-            test_docs = retriever.invoke(message)  # modern API
+            test_docs = retriever.invoke(message)
             logger.info(f"Retriever found {len(test_docs)} documents")
             if test_docs:
                 logger.info(f"Sample doc metadata: {test_docs[0].metadata}")
-                # logger.info(f"Sample content: {test_docs[0].page_content[:200]}")
             else:
                 logger.warning("No documents found by retriever")
                 logger.warning(f"Filter used: {search_kwargs.get('filter')}")

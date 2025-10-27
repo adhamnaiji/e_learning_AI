@@ -8,6 +8,7 @@ from .config import get_settings
 from .models import ChatMessage, ChatResponse, SearchQuery, SearchResult, CourseDocument
 from .embeddings_service import EmbeddingsService
 from .rag_service import RAGService
+from langchain.vectorstores import Qdrant
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -63,13 +64,54 @@ async def health():
 
 @app.post("/api/index-course")
 async def index_course(course: CourseDocument):
-    """Index a course for RAG retrieval"""
+    """Index a course in the vector database"""
     try:
-        embeddings_service.index_course(course.dict())
-        return {"message": f"Course '{course.title}' indexed successfully"}
+        settings = get_settings()  # ← ADD THIS LINE
+        logger.info(f"Indexing course: {course.title} (ID: {course.course_id})")
+        
+        # Split content
+        docs = embeddings_service.text_splitter.split_text(course.content)
+        logger.info(f"Split into {len(docs)} chunks")
+        
+        # Create metadata with both structures for compatibility
+        metadatas = []
+        for i, doc in enumerate(docs):
+            metadatas.append({
+                "course_id": course.course_id,
+                "metadata": {
+                    "course_id": course.course_id
+                },
+                "title": course.title,
+                "instructor": course.instructor,
+                "category": course.category,
+                "level": course.level,
+                "chunk_index": i
+            })
+        
+        # Index to Qdrant
+        vector_store = Qdrant(
+            client=embeddings_service.client,
+            collection_name=settings.collection_name,  # Now settings is defined
+            embeddings=embeddings_service.embeddings,
+        )
+        
+        vector_store.add_texts(
+            texts=docs,
+            metadatas=metadatas
+        )
+        
+        logger.info(f"✅ Successfully indexed course {course.course_id}")
+        
+        return {
+            "message": f"Successfully indexed course: {course.title}",
+            "chunks": len(docs),
+            "course_id": course.course_id
+        }
+        
     except Exception as e:
-        logger.error(f"Error indexing course: {str(e)}")
+        logger.error(f"❌ Error indexing course: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
