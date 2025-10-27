@@ -39,11 +39,15 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware
-settings = get_settings()
+# CORS middleware - FIXED for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url],
+    allow_origins=[
+        "http://localhost:4200",
+        "http://127.0.0.1:4200",
+        "http://localhost:8000",
+        "*"  # Allow all during development - remove in production
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,6 +56,10 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"message": "E-Learning RAG API is running"}
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "message": "API is working"}
 
 @app.post("/api/index-course")
 async def index_course(course: CourseDocument):
@@ -67,6 +75,7 @@ async def index_course(course: CourseDocument):
 async def chat(message: ChatMessage):
     """Chat with the RAG assistant"""
     try:
+        logger.info(f"Received chat message: {message.message}")
         result = await rag_service.chat(
             message=message.message,
             course_id=message.course_id,
@@ -74,7 +83,7 @@ async def chat(message: ChatMessage):
         )
         return ChatResponse(**result)
     except Exception as e:
-        logger.error(f"Error in chat: {str(e)}")
+        logger.error(f"Error in chat: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/search", response_model=List[SearchResult])
@@ -118,4 +127,5 @@ async def clear_conversation(conversation_id: str):
 
 if __name__ == "__main__":
     import uvicorn
+    settings = get_settings()
     uvicorn.run(app, host="0.0.0.0", port=settings.backend_port)

@@ -11,10 +11,11 @@ logger = logging.getLogger(__name__)
 class EmbeddingsService:
     def __init__(self, settings):
         self.settings = settings
+        
         # Use HuggingFace embeddings instead of OpenAI
         self.embeddings = HuggingFaceEmbeddings(
             model_name="BAAI/bge-small-en-v1.5",
-            model_kwargs={'device': 'cpu'},  # Use 'cuda' if you have GPU
+            model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
         
@@ -50,9 +51,8 @@ class EmbeddingsService:
             )
             logger.info(f"Created collection: {self.settings.collection_name}")
         
-        # ALWAYS create payload indexes (moved outside the if block)
+        # ALWAYS create payload indexes
         try:
-            # Index for course_id (integer)
             self.client.create_payload_index(
                 collection_name=self.settings.collection_name,
                 field_name="course_id",
@@ -60,32 +60,39 @@ class EmbeddingsService:
             )
             logger.info("Created index for course_id")
         except Exception as e:
-            # Index might already exist - that's fine
             logger.debug(f"Index creation skipped (may already exist): {e}")
     
     def index_course(self, course_data: dict):
         """Index a course into the vector database"""
-        # Combine course information
-        content = f"""
-        Title: {course_data['title']}
-        Instructor: {course_data['instructor']}
-        Category: {course_data['category']}
-        Level: {course_data['level']}
-        Description: {course_data['description']}
         
-        What You'll Learn:
-        {' '.join(course_data.get('whatYouLearn', []))}
+        # Handle both 'course_id' (from API) and 'id' (from direct calls)
+        course_id = course_data.get('course_id', course_data.get('id'))
         
-        Requirements:
-        {' '.join(course_data.get('requirements', []))}
+        if not course_id:
+            raise ValueError("course_data must contain 'course_id' or 'id'")
         
-        Lessons:
-        {' '.join([f"{lesson['title']}: {lesson['description']}" 
-                   for lesson in course_data.get('lessons', [])])}
-        """
+        # Build content from all available fields
+        content_parts = []
+        
+        # Add basic info
+        content_parts.append(f"Title: {course_data.get('title', '')}")
+        content_parts.append(f"Instructor: {course_data.get('instructor', '')}")
+        content_parts.append(f"Category: {course_data.get('category', '')}")
+        content_parts.append(f"Level: {course_data.get('level', '')}")
+        content_parts.append(f"Description: {course_data.get('description', '')}")
+        
+        # Add the main content field if it exists
+        if 'content' in course_data:
+            content_parts.append(f"\n{course_data['content']}")
+        
+        # Combine all content
+        full_content = "\n\n".join(content_parts)
         
         # Split into chunks
-        chunks = self.text_splitter.split_text(content)
+        chunks = self.text_splitter.split_text(full_content)
+        
+        if not chunks:
+            raise ValueError("No content to index")
         
         # Create vector store
         vector_store = Qdrant(
@@ -96,11 +103,11 @@ class EmbeddingsService:
         
         # Add documents with metadata
         metadatas = [{
-            'course_id': course_data['id'],
-            'title': course_data['title'],
-            'category': course_data['category'],
-            'level': course_data['level'],
-            'instructor': course_data['instructor'],
+            'course_id': course_id,
+            'title': course_data.get('title', ''),
+            'category': course_data.get('category', ''),
+            'level': course_data.get('level', ''),
+            'instructor': course_data.get('instructor', ''),
             'chunk_index': i
         } for i in range(len(chunks))]
         
@@ -109,7 +116,7 @@ class EmbeddingsService:
             metadatas=metadatas
         )
         
-        logger.info(f"Indexed course: {course_data['title']} with {len(chunks)} chunks")
+        logger.info(f"Indexed course: {course_data.get('title')} with {len(chunks)} chunks")
     
     def search_similar(self, query: str, top_k: int = 5, filter_category: str = None):
         """Search for similar courses"""

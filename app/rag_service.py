@@ -22,27 +22,31 @@ class RAGService:
         # Store conversations
         self.conversations = {}
         
-        # Custom prompt template
-        self.prompt_template = """You are an AI learning assistant for an e-learning platform.
-        Your role is to help students understand course content and answer their questions.
-        Use the following context from our courses to answer the question.
-        If you don't know the answer based on the context, say so honestly.
-        Always be encouraging and supportive in your responses.
-        
-        Context: {context}
-        
-        Chat History: {chat_history}
-        
-        Student Question: {question}
-        
-        Helpful Answer:"""
+        # Custom prompt template for course-specific answers
+        self.prompt_template = """You are an AI learning assistant helping students with a SPECIFIC course.
+
+IMPORTANT INSTRUCTIONS:
+1. Answer ONLY based on the course content provided in the context
+2. DO NOT provide general information - be specific to THIS course
+3. If the context contains course information, describe THAT SPECIFIC course
+4. If asked about videos/lessons, list the actual lessons from THIS course
+5. If you don't find the answer in the context, say: "I don't have that specific information about this course."
+
+Course Context:
+{context}
+
+Chat History: {chat_history}
+
+Student Question: {question}
+
+Helpful Answer (specific to this course):"""
     
     def _initialize_llm(self):
         """Initialize LLM based on provider setting"""
         provider = self.settings.llm_provider.lower()
         
         if provider == "perplexity":
-            logger.info("Initializing Perplexity LLM")
+            logger.info(f"Initializing Perplexity LLM: {self.settings.llm_model}")
             return ChatPerplexity(
                 model=self.settings.llm_model,
                 temperature=0.2,
@@ -50,14 +54,14 @@ class RAGService:
                 max_tokens=1024
             )
         elif provider == "groq":
-            logger.info("Initializing Groq LLM")
+            logger.info(f"Initializing Groq LLM: {self.settings.llm_model}")
             return ChatGroq(
                 model=self.settings.llm_model,
                 groq_api_key=self.settings.groq_api_key,
                 temperature=0.7
             )
         else:  # default to openai
-            logger.info("Initializing OpenAI LLM")
+            logger.info(f"Initializing OpenAI LLM: {self.settings.llm_model}")
             return ChatOpenAI(
                 model=self.settings.llm_model,
                 openai_api_key=self.settings.openai_api_key,
@@ -79,9 +83,11 @@ class RAGService:
         
         return conversation_id, self.conversations[conversation_id]
     
-    async def chat(self, message: str, course_id: int = None,
+    async def chat(self, message: str, course_id: int = None, 
                    conversation_id: str = None):
         """Chat with RAG system"""
+        logger.info(f"Chat request - message: '{message}', course_id: {course_id}")
+        
         # Get or create conversation
         conversation_id, memory = self.get_or_create_conversation(conversation_id)
         
@@ -92,10 +98,11 @@ class RAGService:
             embeddings=self.embeddings_service.embeddings
         )
         
-        # Create retriever with optional course filter
+        # Create retriever with course filter
         search_kwargs = {"k": self.settings.top_k_results}
+        
+        # Apply course filter if provided
         if course_id:
-            # Use proper Qdrant filter format
             search_kwargs["filter"] = Filter(
                 must=[
                     FieldCondition(
@@ -104,10 +111,20 @@ class RAGService:
                     )
                 ]
             )
+            logger.info(f"Applying filter for course_id: {course_id}")
         
         retriever = vector_store.as_retriever(
             search_kwargs=search_kwargs
         )
+        
+        # Test retrieval before QA chain
+        try:
+            test_docs = retriever.get_relevant_documents(message)
+            logger.info(f"Retriever found {len(test_docs)} documents")
+            if test_docs:
+                logger.info(f"Sample doc metadata: {test_docs[0].metadata}")
+        except Exception as e:
+            logger.error(f"Retriever test failed: {e}")
         
         # Create QA chain
         qa_chain = ConversationalRetrievalChain.from_llm(
@@ -123,7 +140,10 @@ class RAGService:
         
         # Extract sources
         sources = []
-        for doc in result.get('source_documents', []):
+        source_docs = result.get('source_documents', [])
+        logger.info(f"QA chain returned {len(source_docs)} source documents")
+        
+        for doc in source_docs:
             sources.append({
                 'course_id': doc.metadata.get('course_id'),
                 'title': doc.metadata.get('title'),
@@ -140,3 +160,4 @@ class RAGService:
         """Clear conversation history"""
         if conversation_id in self.conversations:
             del self.conversations[conversation_id]
+            logger.info(f"Cleared conversation: {conversation_id}")
