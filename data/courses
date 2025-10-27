@@ -1,0 +1,54 @@
+{
+        "id": 1,
+        "title": "Complete Angular Developer Course",
+        "description": "Master Angular from scratch with hands-on projects and real-world applications. Learn to build modern, scalable web applications with Angular 17.",
+        "instructor": "John Smith",
+        "category": "Web Development",
+        "level": "Intermediate",
+        "duration": "40 hours",
+        "price": 89.99,
+        "whatYouLearn": [
+            "Build complete Angular applications from scratch",
+            "Master Angular components, directives, and services",
+            "Work with RxJS and reactive programming",
+            "Implement routing and authentication",
+            "Deploy Angular apps to production",
+            "Use Angular CLI effectively",
+            "Handle forms and validation",
+            "Work with HTTP and APIs"
+        ],
+        "requirements": [
+            "Basic HTML, CSS, and JavaScript knowledge",
+            "Understanding of TypeScript is helpful but not required",
+            "A computer with internet connection",
+            "Node.js installed on your system"
+        ],
+        "lessons": [
+            {
+                "title": "Introduction to Angular",
+                "duration": "15:30",
+                "description": "Get started with Angular framework. Learn about Angular architecture, setup development environment, create your first Angular application, and understand the Angular CLI."
+            },
+            {
+                "title": "Components and Templates",
+                "duration": "25:45",
+                "description": "Deep dive into Angular components. Learn about component lifecycle hooks, data binding types (property, event, two-way), template syntax, directives, and how to create reusable components."
+            },
+            {
+                "title": "Services and Dependency Injection",
+                "duration": "30:20",
+                "description": "Understanding Angular services and dependency injection patterns. Learn how to create services, inject them into components, share data across the application, and manage application state."
+            },
+            {
+                "title": "Routing and Navigation",
+                "duration": "28:15",
+                "description": "Implement routing and navigation in Angular applications. Learn about route configuration, route parameters, query parameters, child routes, route guards, and lazy loading modules for better performance."
+            },
+            {
+                "title": "Forms and Validation",
+                "duration": "35:00",
+                "description": "Master Angular forms including template-driven forms and reactive forms. Learn form validation techniques, custom validators, form groups, form arrays, dynamic forms, and handling form submission."
+            }
+        ],
+        "tags": ["Angular", "TypeScript", "Web Development", "Frontend", "JavaScript"]
+    }

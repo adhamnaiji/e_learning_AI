@@ -11,129 +11,127 @@ logger = logging.getLogger(__name__)
 class EmbeddingsService:
     def __init__(self, settings):
         self.settings = settings
-        
-        # Use HuggingFace embeddings instead of OpenAI
+
+        # Use HuggingFace embeddings
         self.embeddings = HuggingFaceEmbeddings(
             model_name="BAAI/bge-small-en-v1.5",
             model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
-        
+
         self.client = QdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key if settings.qdrant_api_key else None
+            url=self.settings.qdrant_url,
+            api_key=self.settings.qdrant_api_key if self.settings.qdrant_api_key else None
         )
-        
+
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
+            chunk_size=self.settings.chunk_size,
+            chunk_overlap=self.settings.chunk_overlap,
             separators=["\n\n", "\n", ". ", " ", ""]
         )
-        
+
         self._ensure_collection_exists()
-    
+
     def _ensure_collection_exists(self):
-        """Create collection if it doesn't exist"""
         collections = self.client.get_collections().collections
-        collection_names = [col.name for col in collections]
-        
-        if self.settings.collection_name not in collection_names:
-            # Get embedding dimension
-            sample_embedding = self.embeddings.embed_query("test")
-            dimension = len(sample_embedding)
-            
-            self.client.create_collection(
+        existing_names = [c.name for c in collections]
+
+        if self.settings.collection_name not in existing_names:
+            self.client.recreate_collection(
                 collection_name=self.settings.collection_name,
                 vectors_config=VectorParams(
-                    size=dimension,
-                    distance=Distance.COSINE
-                )
+                    size=384,  # bge-small-en-v1.5 dim
+                    distance=Distance.COSINE,
+                ),
             )
             logger.info(f"Created collection: {self.settings.collection_name}")
-        
-        # ALWAYS create payload indexes
+
+        # Existing index for course_id at root (keep if you also filter on root)
         try:
             self.client.create_payload_index(
                 collection_name=self.settings.collection_name,
                 field_name="course_id",
-                field_schema=PayloadSchemaType.INTEGER
+                field_schema=PayloadSchemaType.INTEGER,
             )
             logger.info("Created index for course_id")
         except Exception as e:
-            logger.debug(f"Index creation skipped (may already exist): {e}")
-    
-    def index_course(self, course_data: dict):
-        """Index a course into the vector database"""
-        
-        # Handle both 'course_id' (from API) and 'id' (from direct calls)
-        course_id = course_data.get('course_id', course_data.get('id'))
-        
-        if not course_id:
-            raise ValueError("course_data must contain 'course_id' or 'id'")
-        
-        # Build content from all available fields
-        content_parts = []
-        
-        # Add basic info
-        content_parts.append(f"Title: {course_data.get('title', '')}")
-        content_parts.append(f"Instructor: {course_data.get('instructor', '')}")
-        content_parts.append(f"Category: {course_data.get('category', '')}")
-        content_parts.append(f"Level: {course_data.get('level', '')}")
-        content_parts.append(f"Description: {course_data.get('description', '')}")
-        
-        # Add the main content field if it exists
-        if 'content' in course_data:
-            content_parts.append(f"\n{course_data['content']}")
-        
-        # Combine all content
-        full_content = "\n\n".join(content_parts)
-        
-        # Split into chunks
-        chunks = self.text_splitter.split_text(full_content)
-        
-        if not chunks:
-            raise ValueError("No content to index")
-        
-        # Create vector store
+            logger.debug(f"Index course_id may already exist: {e}")
+
+        # NEW: index for nested metadata.course_id
+        try:
+            self.client.create_payload_index(
+                collection_name=self.settings.collection_name,
+                field_name="metadata.course_id",
+                field_schema=PayloadSchemaType.INTEGER,
+            )
+            logger.info("Created index for metadata.course_id")
+        except Exception as e:
+            logger.debug(f"Index metadata.course_id may already exist: {e}")
+
+    def _split_course_to_docs(self, course: dict) -> List:
+        parts = []
+
+        title = course.get("title", "")
+        instructor = course.get("instructor", "")
+        category = course.get("category", "")
+        level = course.get("level", "")
+        description = course.get("description", "")
+
+        header = f"Title: {title}\nInstructor: {instructor}\nCategory: {category}\nLevel: {level}\nDescription: {description}\n"
+        parts.append(header)
+
+        what = course.get("whatYouLearn", [])
+        if what:
+            parts.append("What you will learn:\n" + "\n".join(f"- {w}" for w in what))
+
+        reqs = course.get("requirements", [])
+        if reqs:
+            parts.append("Requirements:\n" + "\n".join(f"- {r}" for r in reqs))
+
+        lessons = course.get("lessons", [])
+        if lessons:
+            lessons_text = []
+            for l in lessons:
+                lessons_text.append(f"- {l.get('title', '')}: {l.get('description', '')}")
+            parts.append("Lessons:\n" + "\n".join(lessons_text))
+
+        text = "\n\n".join(p for p in parts if p.strip())
+        chunks = self.text_splitter.split_text(text)
+
+        from langchain.schema import Document
+        docs = []
+        for chunk in chunks:
+            docs.append(
+                Document(
+                    page_content=chunk,
+                    metadata={
+                        "course_id": course.get("id"),
+                        "title": course.get("title"),
+                        "category": course.get("category"),
+                        "level": course.get("level"),
+                        "instructor": course.get("instructor"),
+                    },
+                )
+            )
+        return docs
+
+    def index_course(self, course: dict):
+        docs = self._split_course_to_docs(course)
+
         vector_store = Qdrant(
             client=self.client,
             collection_name=self.settings.collection_name,
-            embeddings=self.embeddings
+            embeddings=self.embeddings,
         )
-        
-        # Add documents with metadata
-        metadatas = [{
-            'course_id': course_id,
-            'title': course_data.get('title', ''),
-            'category': course_data.get('category', ''),
-            'level': course_data.get('level', ''),
-            'instructor': course_data.get('instructor', ''),
-            'chunk_index': i
-        } for i in range(len(chunks))]
-        
-        vector_store.add_texts(
-            texts=chunks,
-            metadatas=metadatas
-        )
-        
-        logger.info(f"Indexed course: {course_data.get('title')} with {len(chunks)} chunks")
-    
-    def search_similar(self, query: str, top_k: int = 5, filter_category: str = None):
-        """Search for similar courses"""
+
+        vector_store.add_documents(docs)
+        logger.info(f"Indexed course: {course.get('title')} with {len(docs)} chunks")
+
+    def search_similar(self, query: str, top_k: int = 3):
         vector_store = Qdrant(
             client=self.client,
             collection_name=self.settings.collection_name,
-            embeddings=self.embeddings
+            embeddings=self.embeddings,
         )
-        
-        # Build filter if category specified
-        search_kwargs = {"k": top_k}
-        if filter_category:
-            search_kwargs["filter"] = {"category": filter_category}
-        
-        results = vector_store.similarity_search_with_score(
-            query=query,
-            **search_kwargs
-        )
-        
-        return results
+        docs_and_scores = vector_store.similarity_search_with_score(query, k=top_k)
+        return docs_and_scores
